@@ -1020,7 +1020,7 @@
         const notifiedOrderIds = new Set();
         const notifiedCallIds = new Set();
 
-        // ตัวเล่นเสียงตัวเดียว + คิว: เล่นทีละไฟล์ ไม่ซ้อน ไม่ตัดกัน (เสถียรบน iPad/Safari)
+        // ตัวเล่นเสียงตัวเดียว + คิว: เล่นทีละไฟล์ ไม่ซ้อน ไม่ตัดกัน
         const sharedPlayer = new Audio();
         sharedPlayer.preload = 'auto';
         let audioQueue = Promise.resolve();
@@ -1037,13 +1037,21 @@
                     sharedPlayer.onerror = null;
                     resolve();
                 };
-                safetyTimer = setTimeout(finish, 15000); // กันคิวค้างถ้าไฟล์เสียงมีปัญหา
+                safetyTimer = setTimeout(finish, 15000); // กันคิวค้าง
                 sharedPlayer.onended = finish;
                 sharedPlayer.onerror = finish;
+                sharedPlayer.muted = false;
                 sharedPlayer.src = src;
-                sharedPlayer.volume = 1;
                 const p = sharedPlayer.play();
-                if (p && p.catch) p.catch((e) => { console.log("Audio Play Error:", e); finish(); });
+                if (p && p.catch) p.catch((e) => {
+                    console.log("Audio Play Error:", e);
+                    // alert('Audio error: ' + (e && e.name)); // ← เอา // ออกถ้าอยากดูสาเหตุบน iPad
+                    if (e && e.name === 'NotAllowedError') { // ถ้าระบบล็อกเสียงกลับ ให้แตะหน้าจอ 1 ครั้งเพื่อปลดล็อกใหม่
+                        audioInitialized = false;
+                        listenUnlock();
+                    }
+                    finish();
+                });
             });
         }
 
@@ -1052,7 +1060,7 @@
             const srcs = audioArray.filter(Boolean).map(a => a.src);
             audioQueue = audioQueue.then(async () => {
                 for (const src of srcs) await playOneSrc(src);
-            });
+            }).catch(() => {}); // กันคิวพังถาวรถ้ามี error
         }
 
         // ฟังก์ชันสลับเปิด/ปิดเสียงแจ้งเตือน
@@ -1068,25 +1076,23 @@
             }
         };
 
-        // ปลดล็อกเสียง: ต้องแตะหน้าจอ 1 ครั้งหลังเปิดเว็บ (ใช้ไฟล์เงียบ เพราะ iPad ไม่รองรับการตั้ง volume = 0)
-        const SILENT_WAV = 'data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
-        const unlockAudio = () => {
+        // ปลดล็อกเสียง: แตะหน้าจอ 1 ครั้งหลังเปิดเว็บ (เล่นไฟล์จริงแบบ muted เพื่อปลดล็อก ไม่มีเสียงออก)
+        function unlockAudio() {
             if (audioInitialized) return;
-            sharedPlayer.src = SILENT_WAV;
+            audioInitialized = true; // เปิดใช้เสียงทันที ไม่รอผลลัพธ์
+            document.removeEventListener('click', unlockAudio);
+            document.removeEventListener('touchend', unlockAudio);
+            sharedPlayer.muted = true;
+            sharedPlayer.src = audioCheckBill.src;
+            const done = () => { sharedPlayer.pause(); sharedPlayer.muted = false; };
             const p = sharedPlayer.play();
-            if (p && p.then) {
-                p.then(() => {
-                    audioInitialized = true;
-                    document.removeEventListener('click', unlockAudio);
-                    document.removeEventListener('touchend', unlockAudio);
-                }).catch(() => {}); // ถ้าไม่สำเร็จ จะลองใหม่ตอนแตะครั้งถัดไป
-            } else {
-                audioInitialized = true;
-            }
-        };
-        document.addEventListener('click', unlockAudio);
-        document.addEventListener('touchend', unlockAudio);
-
+            if (p && p.then) p.then(done).catch(done); else done();
+        }
+        function listenUnlock() {
+            document.addEventListener('click', unlockAudio);
+            document.addEventListener('touchend', unlockAudio);
+        }
+        listenUnlock();
 
         // 🟢 ฟังก์ชันจัดรูปแบบหมายเลขออเดอร์ให้ขึ้นต้นด้วย AD ตามด้วยเลข 5 หลัก
         window.formatOrderID = (id) => {
